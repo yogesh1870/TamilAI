@@ -1,0 +1,124 @@
+# தமிழ் இலக்கணம் — Login + Chat shell
+
+## Files
+- `app.py` — Flask backend (register, login, chat page, logout, `/api/send` placeholder)
+- `templates/index.html` — login/register page (the design you sent)
+- `templates/chat.html` — empty chatbot page shown after login
+- `static/style.css` — shared stylesheet
+- `requirements.txt` — Python dependencies
+For Ollama:
+
+If venv is NOT there
+
+->Create a new virtual environment inside this new project location:
+
+      python -m venv venv
+
+Wait until it finishes.
+
+->Then install the packages:
+
+       venv\Scripts\python.exe -m pip install flask requests psycopg2-binary werkzeug
+
+->Then run:
+
+      venv\Scripts\python.exe app.py
+If you get the same PowerShell error
+
+Use:
+
+      .\venv\Scripts\python.exe app.py
+
+Notice the .\ at the beginning.
+
+1. Start Ollama
+
+Open another PowerShell window.
+
+Run:
+
+ollama run tamilgrammar
+
+You should get:
+
+>>> 
+
+You can leave this window open.
+
+2. Start Flask
+
+Go back to your VS Code terminal.
+
+Run:
+
+venv\Scripts\python.exe app.py
+
+You should see:
+
+* Running on http://127.0.0.1:5000
+3. Open your website
+
+Open Chrome and go to:
+
+http://127.0.0.1:5000
+
+You should see your Tamil Grammar Checker.
+
+4. Test it
+
+Enter:
+
+நான் நேற்று பள்ளிக்கு சென்றான்.
+
+Click:
+
+Check Grammar
+
+## Setup
+
+1. Make sure Postgres is running and the `tamil` database exists with a `users` table
+   (matching what you already have — `app.py`'s `init_db()` will create it if missing):
+
+   ```sql
+   CREATE TABLE IF NOT EXISTS users (
+       user_id SERIAL PRIMARY KEY,
+       username VARCHAR(80) UNIQUE NOT NULL,
+       email VARCHAR(120) UNIQUE NOT NULL,
+       password_hash VARCHAR(255) NOT NULL,
+       created_at TIMESTAMP DEFAULT NOW()
+   );
+   ```
+
+2. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Run:
+
+   ```bash
+   python app.py
+   ```
+
+   Visit `http://localhost:5000`.
+
+## How it works
+
+- `/` shows the login/register card. Submitting login checks the `users` table with
+  `check_password_hash`; submitting signup checks for an existing username/email, hashes
+  the password with `generate_password_hash` (scrypt — matches the hash format already in
+  your table), inserts the row, and logs the user in.
+- Session state (`session["user_id"]`) gates `/chat` — anyone not logged in is redirected
+  back to `/`.
+- `/chat` is an empty chat shell: it posts each typed message to `/api/send` and shows
+  whatever `reply` comes back. Right now `/api/send` returns an empty reply — that's the
+  hook point for wiring up an actual chatbot/AI backend later.
+- `/logout` clears the session.
+
+## Notes / things to change before shipping this for real
+
+- `app.secret_key` and `DB_CONFIG["password"]` are hard-coded for local dev. For anything
+  beyond your own machine, move both into environment variables and out of source control.
+- The Google sign-in button is still a placeholder alert, as in your original file — hooking
+  it up needs a Google OAuth Client ID plus a server-side token exchange.

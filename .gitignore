@@ -1,0 +1,15 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Large model files
+*.gguf
+
+# Environment / secrets
+.env
+
+# OS
+.DS_Store
+Thumbs.db
