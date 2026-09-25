@@ -22,7 +22,6 @@
   .error-block .explain { display: block; opacity: 0.85; margin-top: 2px; }
   .result-explain { margin-top: 6px; font-size: 0.9em; opacity: 0.9; }
   .result-note { margin-top: 6px; font-size: 0.8em; opacity: 0.6; font-style: italic; }
-  /* Virtual Tamil keyboard */
   .tamil-kb-toggle { background: none; border: 1px solid rgba(0,0,0,0.15); border-radius: 8px; font-size: 0.85em; padding: 6px 10px; cursor: pointer; white-space: nowrap; }
   .tamil-kb-toggle.active { background: rgba(122, 28, 52, 0.12); border-color: rgba(122, 28, 52, 0.4); }
   .tamil-kb { display: none; grid-template-columns: repeat(10, 1fr); gap: 4px; padding: 8px; margin-bottom: 6px; background: rgba(0,0,0,0.03); border-radius: 10px; }
@@ -99,7 +98,6 @@
 </div>
 
 <script>
-// -------- Element refs --------
 const form = document.getElementById('chatForm');
 const input = document.getElementById('chatInput');
 const messagesEl = document.getElementById('messagesInner');
@@ -123,7 +121,6 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
-// -------- Chat bubbles --------
 function appendBubble(text, who) {
     const row = document.createElement('div');
     row.className = 'msg-row ' + who;
@@ -154,11 +151,6 @@ function scorePillHtml(label, value) {
     const shown = (value === null || value === undefined) ? '—' : `${value}/100`;
     return `<span class="score-pill">${label}: <strong>${shown}</strong></span>`;
 }
-
-// Renders the full result card. Used both for a fresh /api/send reply AND
-// (NEW) for re-displaying a past submission fetched from /api/submission/<id>
-// -- this is what fixes scores/errors disappearing after a refresh or a
-// history click, since previously that path only showed plain text bubbles.
 function renderBotResult(data) {
     const row = document.createElement('div');
     row.className = 'msg-row bot';
@@ -211,8 +203,6 @@ function renderBotResult(data) {
     messagesEl.appendChild(row);
     messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
 }
-
-// -------- Typing indicator --------
 function showTyping() {
     removeTyping();
     const row = document.createElement('div');
@@ -232,8 +222,6 @@ function setSendingState(isSending) {
     input.disabled = isSending;
     if (!isSending) input.focus();
 }
-
-// -------- History --------
 async function loadHistory() {
     historyList.innerHTML = '<div class="history-label">வரலாறு (ஒவ்வொன்றும் ஒரு தனி சரிபார்ப்பு)</div>';
 
@@ -263,12 +251,6 @@ async function loadHistory() {
         console.error('Failed to load history:', err);
     }
 }
-
-// Each row in history is one independent grammar check (no conversation_id
-// in the schema), so selecting one replaces the panel with just that one
-// exchange. NEW: this now re-fetches the full result (errors + scores) from
-// /api/submission/<id> instead of just showing the plain corrected text, so
-// the score card survives a refresh or a click back into an old entry.
 async function selectSubmission(sub) {
     if (!sub) return;
     activeSubmissionId = sub.submission_id;
@@ -304,16 +286,12 @@ function startNewChat() {
     input.value = '';
     input.focus();
 }
-
-// -------- Sidebar --------
 function openSidebarMobile() { sidebar.classList.add('open'); sidebarBackdrop.classList.add('show'); }
 function closeSidebarMobile() { sidebar.classList.remove('open'); sidebarBackdrop.classList.remove('show'); }
 sidebarToggle.addEventListener('click', openSidebarMobile);
 sidebarBackdrop.addEventListener('click', closeSidebarMobile);
 newChatBtn.addEventListener('click', startNewChat);
 chartBtn.addEventListener('click', () => alert('பகுப்பாய்வு அம்சம் விரைவில் வருகிறது! (Coming soon)'));
-
-// -------- Virtual Tamil keyboard --------
 const TAMIL_KEYS = [
     'அ','ஆ','இ','ஈ','உ','ஊ','எ','ஏ','ஐ','ஒ',
     'ஓ','ஔ','ஃ','க','ங','ச','ஞ','ட','ண','த',
@@ -364,8 +342,6 @@ tamilKbToggle.addEventListener('click', () => {
     tamilKb.classList.toggle('open');
     tamilKbToggle.classList.toggle('active');
 });
-
-// -------- Send message --------
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = input.value.trim();
@@ -415,8 +391,6 @@ input.addEventListener('keydown', (e) => {
         form.requestSubmit();
     }
 });
-
-// -------- Initial load --------
 loadHistory();
 input.focus();
 </script>
