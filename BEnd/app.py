@@ -84,3 +84,53 @@ def index():
         return redirect(url_for("chat"))
     return render_template("index.html", active_tab="login")
 
+@app.route("/register", methods=["POST"])
+def register():
+    username = request.form.get("username", "").strip()
+    email = request.form.get("email", "").strip()
+    password = request.form.get("password", "").strip()
+
+    if not username or not email or not password:
+        return render_template(
+            "index.html", active_tab="signup",
+            signup_error="அனைத்து விவரங்களையும் நிரப்பவும்.",
+        )
+
+    if len(password) < 8:
+        return render_template(
+            "index.html", active_tab="signup",
+            signup_error="கடவுச்சொல் குறைந்தது 8 எழுத்துகள் இருக்க வேண்டும்.",
+        )
+
+    password_hash = generate_password_hash(password)
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            "SELECT user_id FROM users WHERE username = %s OR email = %s",
+            (username, email), )
+        if cur.fetchone():
+            return render_template(
+                "index.html", active_tab="signup",
+                signup_error="இந்த பயனர் பெயர் அல்லது மின்னஞ்சல் ஏற்கனவே பதிவு செய்யப்பட்டுள்ளது.",
+            )
+
+        cur.execute(
+            """
+            INSERT INTO users (username, email, password_hash)
+            VALUES (%s, %s, %s) RETURNING user_id
+            """,
+            (username, email, password_hash),
+        )
+        user_id = cur.fetchone()[0]
+        conn.commit()
+
+    finally:
+        cur.close()
+        conn.close()
+
+    session["user_id"] = user_id
+    session["username"] = username
+    return redirect(url_for("chat"))
+
