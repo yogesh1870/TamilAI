@@ -11,6 +11,9 @@ from werkzeug.security import check_password_hash, generate_password_hash
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "tamil-llama"
+
 DB_CONFIG = dict(
     host="localhost",
     dbname="tamil",
