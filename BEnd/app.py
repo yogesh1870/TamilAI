@@ -137,3 +137,51 @@ def register():
     session["username"] = username
     return redirect(url_for("chat"))
 
+@app.route("/login", methods=["POST"])
+def login():
+    identifier = request.form.get("username", "").strip()
+    password = request.form.get("password", "").strip()
+
+    if not identifier or not password:
+        return render_template(
+            "index.html", active_tab="login",
+            login_error="பயனர் பெயரும் கடவுச்சொல்லும் தேவை.",
+        )
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    try:
+        cur.execute(
+            "SELECT user_id, username, password_hash FROM users "
+            "WHERE username = %s OR email = %s",
+            (identifier, identifier),
+        )
+        user = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+
+    if not user or not check_password_hash(user["password_hash"], password):
+        return render_template(
+            "index.html", active_tab="login",
+            login_error="கணக்கு இல்லை அல்லது தவறான கடவுச்சொல். பதிவு செய்யவும்.",
+        )
+
+    session["user_id"] = user["user_id"]
+    session["username"] = user["username"]
+    return redirect(url_for("chat"))
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("index"))
+
+
+@app.route("/chat")
+def chat():
+    if not session.get("user_id"):
+        return redirect(url_for("index"))
+    return render_template("chat.html", username=session.get("username"))
+
