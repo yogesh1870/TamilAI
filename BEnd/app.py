@@ -11,6 +11,46 @@ from werkzeug.security import check_password_hash, generate_password_hash
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
+
+def load_system_prompt(modelfile_name="Modelfile"):
+    """Extract the text inside SYSTEM \"\"\" ... \"\"\" from the Ollama Modelfile
+    that sits next to this app.py."""
+    modelfile_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        modelfile_name,
+    )
+
+    with open(modelfile_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    match = re.search(r'SYSTEM\s*"""(.*?)"""', content, re.DOTALL)
+
+    if not match:
+        raise RuntimeError(
+            f"Could not find a SYSTEM \"\"\" ... \"\"\" block in {modelfile_path}. "
+            "app.py reads the system prompt from the Modelfile at startup -- "
+            "make sure Modelfile is in the same folder as app.py and still "
+            "has a SYSTEM block."
+        )
+
+    return match.group(1).strip()
+
+
+SYSTEM_PROMPT = load_system_prompt()
+
+OLLAMA_BASE_OPTIONS = {
+    "num_ctx": 4096,     
+    "num_predict": 512,  
+    "temperature": 0,      
+                       
+    "top_p": 1,
+    "top_k": 1,
+    "seed": 42,             
+}
+
+OLLAMA_KEEP_ALIVE = "30m"
+MAX_OLLAMA_ATTEMPTS = 2
+
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "tamil-llama"
 
@@ -184,4 +224,5 @@ def chat():
     if not session.get("user_id"):
         return redirect(url_for("index"))
     return render_template("chat.html", username=session.get("username"))
+
 
