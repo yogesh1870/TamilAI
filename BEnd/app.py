@@ -11,6 +11,9 @@ from werkzeug.security import check_password_hash, generate_password_hash
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
+# OLLAMA
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "tamil-llama"
 
 def load_system_prompt(modelfile_name="Modelfile"):
     """Extract the text inside SYSTEM \"\"\" ... \"\"\" from the Ollama Modelfile
@@ -49,10 +52,7 @@ OLLAMA_BASE_OPTIONS = {
 }
 
 OLLAMA_KEEP_ALIVE = "30m"
-MAX_OLLAMA_ATTEMPTS = 2
-
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "tamil-llama"
+MAX_OLLAMA_ATTEMPTS = 2    
 
 DB_CONFIG = dict(
     host="localhost",
@@ -225,4 +225,9 @@ def chat():
         return redirect(url_for("index"))
     return render_template("chat.html", username=session.get("username"))
 
+CORRECTED_LABEL_PATTERNS = [
+    r"corrected\s+tamil\s+sentence\s*:\s*(.*)",
+    r"திருத்தப்பட்ட\s+(?:தமிழ்\s+)?வாக்கியம்\s*:\s*(.*)",
+    r"corrected\s+text\s*:\s*(.*)",
+]
 
