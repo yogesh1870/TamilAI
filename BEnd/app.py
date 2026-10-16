@@ -432,6 +432,85 @@ def save_submission(user_id, input_text, parsed):
         cur.close()
         conn.close()
 
+PARAGRAPH_FEWSHOT_EXAMPLE = (
+    "எடுத்துக்காட்டு:\n"
+    "தவறான வாக்கியம்: நான் காலையில் எழுந்து பல் துலக்கினேன், பிறகு சாப்பாடு "
+    "சாப்பிட்டேன், ஆனால் பள்ளிக்கு தாமதமாக போனேன் ஏனெனில் பேருந்து நேரம் "
+    "தவறிவிட்டேன்.\n"
+    "Corrected Tamil Sentence: நான் காலையில் எழுந்து பல் துலக்கினேன், பிறகு "
+    "சாப்பாடு சாப்பிட்டேன், ஆனால் பள்ளிக்கு தாமதமாக சென்றேன், ஏனெனில் "
+    "பேருந்து நேரத்தை தவறவிட்டேன்.\n\n"
+)
+
+PARAGRAPH_FEWSHOT_THRESHOLD_WORDS = 15
 
 
+def build_prompt(user_message):
+    word_count = len(user_message.split())
+    if word_count <= PARAGRAPH_FEWSHOT_THRESHOLD_WORDS:
+        return (
+            f"{user_message}\n\n"
+            "Reply with only the corrected Tamil sentence, in the form:\n"
+            "Corrected Tamil Sentence: <the corrected sentence>"
+        )
+
+    return (
+        PARAGRAPH_FEWSHOT_EXAMPLE
+        + "மேலே உள்ள எடுத்துக்காட்டு போல, கீழே உள்ள முழு வாக்கியத்தையும் "
+        "(அதன் எல்லா பகுதிகளையும், குறுக்காமல்) திருத்தி எழுதவும். இதை ஒரு "
+        "சிறிய வாக்கியமாக சுருக்கக்கூடாது; திருத்தப்பட்ட பதில் மூல "
+        "வாக்கியத்தைப் போலவே நீளமாகவும் அனைத்து பகுதிகளையும் "
+        "உள்ளடக்கியதாகவும் இருக்க வேண்டும்.\n\n"
+        f"தவறான வாக்கியம்: {user_message}\n\n"
+        "Corrected Tamil Sentence:"
+    )
+
+
+def call_ollama_once(user_message, attempt=1):
+    prompt = build_prompt(user_message)
+    input_words = len(user_message.split())
+    num_predict = min(768, max(150, input_words * 12))
+
+    options = dict(OLLAMA_BASE_OPTIONS)
+    options["num_predict"] = num_predict
+
+    if attempt > 1:
+        options["seed"] = OLLAMA_BASE_OPTIONS.get("seed", 42) + attempt
+        options["temperature"] = 0.3
+        options["top_p"] = 0.9
+        options["top_k"] = 40
+
+    request_started = time.monotonic()
+
+    response = requests.post(
+        OLLAMA_URL,
+        json={
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": options,
+            "keep_alive": OLLAMA_KEEP_ALIVE,
+        },
+        timeout=240,
+    )
+
+    wall_seconds = time.monotonic() - request_started
+
+    print("Ollama status:", response.status_code)
+    print(f"Ollama wall time: {wall_seconds:.2f}s (num_predict={num_predict}, input_words={input_words})")
+    print("Ollama raw response:", response.text[:1000])
+
+    response.raise_for_status()
+    result = response.json()
+    if "total_duration" in result:
+        to_ms = lambda ns: ns / 1_000_000
+        print(
+            "Ollama internal timings (ms): "
+            f"total={to_ms(result.get('total_duration', 0)):.0f} "
+            f"load={to_ms(result.get('load_duration', 0)):.0f} "
+            f"prompt_eval={to_ms(result.get('prompt_eval_duration', 0)):.0f} "
+            f"generate={to_ms(result.get('eval_duration', 0)):.0f} "
+            f"(generated {result.get('eval_count', 0)} tokens)"
+        )
+    return result.get("response", "").strip(), result
 
