@@ -16,13 +16,10 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "tamil-llama"
 
 def load_system_prompt(modelfile_name="Modelfile"):
-    """Extract the text inside SYSTEM \"\"\" ... \"\"\" from the Ollama Modelfile
-    that sits next to this app.py."""
     modelfile_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         modelfile_name,
     )
-
     with open(modelfile_path, "r", encoding="utf-8") as f:
         content = f.read()
 
@@ -40,7 +37,6 @@ def load_system_prompt(modelfile_name="Modelfile"):
 
 
 SYSTEM_PROMPT = load_system_prompt()
-
 OLLAMA_BASE_OPTIONS = {
     "num_ctx": 4096,     
     "num_predict": 512,  
@@ -241,18 +237,6 @@ TRAILING_SECTION_RE = re.compile(
 
 
 def extract_corrected_sentence(reply_text, original_text):
-    """Pull the corrected sentence/paragraph out of the model's reply.
-
-    IMPORTANT: this keeps the full multi-line corrected text (previously it
-    took only the first line via splitlines()[0], which silently truncated
-    any paragraph input down to its first sentence).
-
-    Also guards against a different failure mode seen with longer/complex
-    input: the fine-tuned model sometimes ignores the actual input and
-    returns a short, unrelated sentence it has apparently memorized from
-    training, instead of a real correction. A "correction" that is far
-    shorter than the original is treated as a failed parse rather than
-    presented as a real result -- see is_suspiciously_short() below."""
     if not reply_text:
         return original_text, False
 
@@ -274,17 +258,7 @@ def extract_corrected_sentence(reply_text, original_text):
 
     return original_text, False
 
-
-
 def is_suspiciously_short(original_text, candidate_text):
-    """A real correction should be roughly the same length as the input --
-    grammar/spelling fixes don't delete most of a sentence. If the model's
-    reply is much shorter than the input once the input is long enough for
-    that to be meaningful, it's more likely the model gave up and returned
-    a stock/memorized sentence than a genuine correction of everything the
-    user wrote. Short inputs are exempt since normal single-word/short-
-    phrase corrections can legitimately shrink a lot (e.g. removing a
-    duplicated word)."""
     original_words = len(original_text.split())
     candidate_words = len(candidate_text.split())
 
@@ -299,18 +273,6 @@ def char_similarity(a, b):
 
 
 def diff_errors(original_text, corrected_text):
-    """Word-level diff between the original and corrected sentence/paragraph.
-    Returns (spelling_errors, grammar_errors) lists of
-    {wrong, correct, explanation} dicts.
-
-    Classification heuristic: for each changed word/phrase, compare the
-    character-level similarity of the 'wrong' vs 'correct' form. A small
-    edit (most characters shared, e.g. a single letter fixed) is treated as
-    a spelling error; a larger change (different word/suffix/tense) is
-    treated as a grammar error. This is a simple, explainable heuristic --
-    not true grammatical parsing -- but it is deterministic and always
-    produces a real, defensible answer.
-    """
     orig_words = original_text.split()
     corr_words = corrected_text.split()
 
@@ -346,7 +308,6 @@ def diff_errors(original_text, corrected_text):
 
     return spelling_errors, grammar_errors
 
-#scores
 def compute_result(original_text, model_reply):
     corrected_text, parsed_ok = extract_corrected_sentence(model_reply, original_text)
 
