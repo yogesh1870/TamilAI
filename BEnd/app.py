@@ -231,3 +231,207 @@ CORRECTED_LABEL_PATTERNS = [
     r"corrected\s+text\s*:\s*(.*)",
 ]
 
+
+TEMPLATE_ECHO_MARKERS = ["XX/100", "[complete corrected", "Error 1:\nWrong: ...", "Wrong: ..."]
+
+TRAILING_SECTION_RE = re.compile(
+    r"\n\s*\n|\n(?=(?:Explanation|Note|Error|Score|விளக்கம்|குறிப்பு|பிழை|மதிப்பெண்)\s*[:：])",
+    re.IGNORECASE,
+)
+
+
+def extract_corrected_sentence(reply_text, original_text):
+    """Pull the corrected sentence/paragraph out of the model's reply.
+
+    IMPORTANT: this keeps the full multi-line corrected text (previously it
+    took only the first line via splitlines()[0], which silently truncated
+    any paragraph input down to its first sentence).
+
+    Also guards against a different failure mode seen with longer/complex
+    input: the fine-tuned model sometimes ignores the actual input and
+    returns a short, unrelated sentence it has apparently memorized from
+    training, instead of a real correction. A "correction" that is far
+    shorter than the original is treated as a failed parse rather than
+    presented as a real result -- see is_suspiciously_short() below."""
+    if not reply_text:
+        return original_text, False
+
+    for marker in TEMPLATE_ECHO_MARKERS:
+        if marker in reply_text:
+            return original_text, False
+
+    for pattern in CORRECTED_LABEL_PATTERNS:
+        match = re.search(pattern, reply_text, re.IGNORECASE | re.DOTALL)
+        if match:
+            candidate = match.group(1).strip()
+            candidate = TRAILING_SECTION_RE.split(candidate)[0].strip()
+            if candidate and not is_suspiciously_short(original_text, candidate):
+                return candidate, True
+
+    cleaned = reply_text.strip()
+    if cleaned and len(cleaned) < 1000 and not is_suspiciously_short(original_text, cleaned):
+        return cleaned, True
+
+    return original_text, False
+
+
+
+def is_suspiciously_short(original_text, candidate_text):
+    """A real correction should be roughly the same length as the input --
+    grammar/spelling fixes don't delete most of a sentence. If the model's
+    reply is much shorter than the input once the input is long enough for
+    that to be meaningful, it's more likely the model gave up and returned
+    a stock/memorized sentence than a genuine correction of everything the
+    user wrote. Short inputs are exempt since normal single-word/short-
+    phrase corrections can legitimately shrink a lot (e.g. removing a
+    duplicated word)."""
+    original_words = len(original_text.split())
+    candidate_words = len(candidate_text.split())
+
+    if original_words < 8:
+        return False
+
+    return candidate_words < original_words * 0.5
+
+
+def char_similarity(a, b):
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def diff_errors(original_text, corrected_text):
+    """Word-level diff between the original and corrected sentence/paragraph.
+    Returns (spelling_errors, grammar_errors) lists of
+    {wrong, correct, explanation} dicts.
+
+    Classification heuristic: for each changed word/phrase, compare the
+    character-level similarity of the 'wrong' vs 'correct' form. A small
+    edit (most characters shared, e.g. a single letter fixed) is treated as
+    a spelling error; a larger change (different word/suffix/tense) is
+    treated as a grammar error. This is a simple, explainable heuristic --
+    not true grammatical parsing -- but it is deterministic and always
+    produces a real, defensible answer.
+    """
+    orig_words = original_text.split()
+    corr_words = corrected_text.split()
+
+    matcher = difflib.SequenceMatcher(None, orig_words, corr_words)
+
+    spelling_errors = []
+    grammar_errors = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+
+        wrong_chunk = " ".join(orig_words[i1:i2]) or "(விடுபட்டுள்ளது)"
+        correct_chunk = " ".join(corr_words[j1:j2]) or "(நீக்கப்பட்டுள்ளது)"
+
+        similarity = char_similarity(wrong_chunk, correct_chunk)
+
+        if tag == "replace" and similarity >= 0.6:
+            spelling_errors.append({
+                "wrong": wrong_chunk,
+                "correct": correct_chunk,
+                "explanation": f"'{wrong_chunk}' என்பது எழுத்துப் பிழையுடன் உள்ளது; சரியான வடிவம் '{correct_chunk}'.",
+            })
+        else:
+            label = "மாற்றப்பட வேண்டும்" if tag == "replace" else (
+                "நீக்கப்பட வேண்டும்" if tag == "delete" else "சேர்க்கப்பட வேண்டும்"
+            )
+            grammar_errors.append({
+                "wrong": wrong_chunk,
+                "correct": correct_chunk,
+                "explanation": f"'{wrong_chunk}' {label}; சரியான வடிவம் '{correct_chunk}' (இலக்கணம்/வாக்கிய அமைப்பு).",
+            })
+
+    return spelling_errors, grammar_errors
+
+#scores
+def compute_result(original_text, model_reply):
+    corrected_text, parsed_ok = extract_corrected_sentence(model_reply, original_text)
+
+    total_words = max(len(original_text.split()), 1)
+    spelling_errors, grammar_errors = diff_errors(original_text, corrected_text)
+
+    spelling_count = len(spelling_errors)
+    grammar_count = len(grammar_errors)
+
+    spelling_score = round(max(0, (total_words - spelling_count) / total_words * 100))
+    grammar_score = round(max(0, (total_words - grammar_count) / total_words * 100))
+    sentence_score = round(max(0, (total_words - spelling_count - grammar_count) / total_words * 100))
+    overall_score = round(0.3 * spelling_score + 0.4 * grammar_score + 0.3 * sentence_score)
+
+    if spelling_count == 0 and grammar_count == 0:
+        overall_explanation = "வாக்கியத்தில்/பத்தியில் பிழைகள் எதுவும் இல்லை."
+    else:
+        overall_explanation = (
+            f"மொத்தம் {spelling_count} எழுத்துப் பிழை(கள்) மற்றும் "
+            f"{grammar_count} இலக்கணப் பிழை(கள்) கண்டறியப்பட்டு திருத்தப்பட்டுள்ளன."
+        )
+
+    return {
+        "parsed_ok": parsed_ok,
+        "corrected_text": corrected_text,
+        "spelling_errors": spelling_errors,
+        "spelling_score": spelling_score,
+        "grammar_errors": grammar_errors,
+        "grammar_score": grammar_score,
+        "sentence_score": sentence_score,
+        "overall_score": overall_score,
+        "overall_explanation": overall_explanation,
+    }
+
+
+def save_submission(user_id, input_text, parsed):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            INSERT INTO submissions (user_id, input_text, clean_text)
+            VALUES (%s, %s, %s) RETURNING submission_id
+            """,
+            (user_id, input_text, parsed["corrected_text"]),
+        )
+        submission_id = cur.fetchone()[0]
+
+        for err in parsed["spelling_errors"]:
+            cur.execute(
+                """
+                INSERT INTO corrections (submission_id, error_type, corrected_text, explanation)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (submission_id, "spelling", f"{err['wrong']} → {err['correct']}", err["explanation"]),
+            )
+
+        for err in parsed["grammar_errors"]:
+            cur.execute(
+                """
+                INSERT INTO corrections (submission_id, error_type, corrected_text, explanation)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (submission_id, "grammar", f"{err['wrong']} → {err['correct']}", err["explanation"]),
+            )
+
+        cur.execute(
+            """
+            INSERT INTO scores (submission_id, spelling_score, grammar_score, sentence_score, overall_score)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (submission_id, parsed["spelling_score"], parsed["grammar_score"],
+             parsed["sentence_score"], parsed["overall_score"]),
+        )
+
+        conn.commit()
+        print(f"[DB] Saved submission_id={submission_id} for user_id={user_id} "
+              f"({len(parsed['spelling_errors'])} spelling, {len(parsed['grammar_errors'])} grammar)")
+        return submission_id
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+
+
