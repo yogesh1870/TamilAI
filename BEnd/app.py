@@ -475,3 +475,101 @@ def call_ollama_once(user_message, attempt=1):
         )
     return result.get("response", "").strip(), result
 
+#msg to llm nd response
+@app.route("/api/send", methods=["POST"])
+def api_send():
+    if not session.get("user_id"):
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    user_message = data.get("message", "").strip()
+
+    if not user_message:
+        return jsonify({"error": "empty message"}), 400
+
+    print("\n========== AI REQUEST ==========")
+    print("User message:", user_message)
+
+    request_started = time.monotonic()
+
+    try:
+        reply = ""
+        result = {}
+        parsed = None
+
+        for attempt in range(1, MAX_OLLAMA_ATTEMPTS + 1):
+            reply, result = call_ollama_once(user_message, attempt=attempt)
+            print(f"Attempt {attempt} reply:", reply)
+
+            parsed = compute_result(user_message, reply)
+            if parsed["parsed_ok"]:
+                break
+            print(f"Attempt {attempt} failed to parse -- retrying" if attempt < MAX_OLLAMA_ATTEMPTS else
+                  f"Attempt {attempt} failed to parse -- giving up, no attempts left")
+
+        total_wall = time.monotonic() - request_started
+        print(f"/api/send total wall time: {total_wall:.2f}s across up to {MAX_OLLAMA_ATTEMPTS} attempt(s)")
+        print("================================\n")
+
+        if parsed is None:
+            return jsonify({"error": "Ollama returned an empty response.", "ollama_response": result}), 500
+
+        submission_id = save_submission(session["user_id"], user_message, parsed)
+
+        return jsonify({
+            "reply": reply,
+            "parsed_ok": parsed["parsed_ok"],
+            "submission_id": submission_id,
+            "corrected_text": parsed["corrected_text"],
+            "spelling_errors": parsed["spelling_errors"],
+            "grammar_errors": parsed["grammar_errors"],
+            "overall_explanation": parsed["overall_explanation"],
+            "scores": {
+                "spelling_score": parsed["spelling_score"],
+                "grammar_score": parsed["grammar_score"],
+                "sentence_score": parsed["sentence_score"],
+                "overall_score": parsed["overall_score"],
+            },
+        })
+
+    except requests.exceptions.ConnectionError as e:
+        print("OLLAMA CONNECTION ERROR:", e)
+        return jsonify({"error": "Ollama is not running or cannot be reached."}), 500
+
+    except requests.exceptions.Timeout as e:
+        print("OLLAMA TIMEOUT:", e)
+        return jsonify({"error": "Tamil AI took too long to respond."}), 500
+
+    except requests.exceptions.HTTPError as e:
+        print("OLLAMA HTTP ERROR:", e)
+        return jsonify({"error": f"Ollama error: {e}"}), 500
+
+    except Exception as e:
+        print("UNEXPECTED ERROR:", repr(e))
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+
+@app.route("/api/submissions")
+def api_submissions():
+    if not session.get("user_id"):
+        return jsonify({"error": "unauthorized"}), 401
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    try:
+        cur.execute(
+            """
+            SELECT submission_id, input_text, clean_text, created_at
+            FROM submissions WHERE user_id = %s ORDER BY created_at DESC
+            """,
+            (session["user_id"],),
+        )
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+    return jsonify([dict(row) for row in rows])
+
+    
