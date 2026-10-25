@@ -825,6 +825,6 @@ def chart_analysis():
     )
 
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     init_db()
     app.run(debug=True)
