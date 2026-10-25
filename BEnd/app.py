@@ -572,4 +572,162 @@ def api_submissions():
 
     return jsonify([dict(row) for row in rows])
 
+
+@app.route("/api/submission/<int:submission_id>")
+def api_submission_detail(submission_id):
+    """NEW: returns everything needed to re-render the full result card for
+    one past submission -- corrected text, spelling/grammar error lists and
+    scores -- so selecting a history item (or reloading the page) doesn't
+    lose the structured view down to a bare pair of chat bubbles."""
+    if not session.get("user_id"):
+        return jsonify({"error": "unauthorized"}), 401
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    try:
+        cur.execute(
+            """
+            SELECT submission_id, input_text, clean_text
+            FROM submissions WHERE submission_id = %s AND user_id = %s
+            """,
+            (submission_id, session["user_id"]),
+        )
+        sub = cur.fetchone()
+        if not sub:
+            return jsonify({"error": "not found"}), 404
+
+        cur.execute(
+            "SELECT error_type, corrected_text, explanation FROM corrections WHERE submission_id = %s",
+            (submission_id,),
+        )
+        correction_rows = cur.fetchall()
+
+        cur.execute(
+            """
+            SELECT spelling_score, grammar_score, sentence_score, overall_score
+            FROM scores WHERE submission_id = %s
+            """,
+            (submission_id,),
+        )
+        score_row = cur.fetchone() or {}
+    finally:
+        cur.close()
+        conn.close()
+
+    spelling_errors, grammar_errors = [], []
+    for row in correction_rows:
+        wrong, _, correct = row["corrected_text"].partition(" → ")
+        entry = {"wrong": wrong, "correct": correct, "explanation": row["explanation"]}
+        target = spelling_errors if row["error_type"] == "spelling" else grammar_errors
+        target.append(entry)
+
+    return jsonify({
+        "submission_id": sub["submission_id"],
+        "input_text": sub["input_text"],
+        "corrected_text": sub["clean_text"],
+        "parsed_ok": True,
+        "spelling_errors": spelling_errors,
+        "grammar_errors": grammar_errors,
+        "overall_explanation": None,
+        "scores": {
+            "spelling_score": score_row.get("spelling_score"),
+            "grammar_score": score_row.get("grammar_score"),
+            "sentence_score": score_row.get("sentence_score"),
+            "overall_score": score_row.get("overall_score"),
+        },
+    })
+
+
+@app.route("/api/debug/counts")
+def api_debug_counts():
+    if not session.get("user_id"):
+        return jsonify({"error": "unauthorized"}), 401
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT current_database(), inet_server_addr(), inet_server_port();")
+        db_name, host, port = cur.fetchone()
+
+        cur.execute("SELECT COUNT(*) FROM submissions;")
+        total_submissions = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM submissions WHERE user_id = %s;", (session["user_id"],))
+        my_submissions = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM corrections;")
+        total_corrections = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM scores;")
+        total_scores = cur.fetchone()[0]
+    finally:
+        cur.close()
+        conn.close()
+
+    return jsonify({
+        "connected_to_database": db_name,
+        "connected_to_host": str(host) if host else "localhost (unix socket)",
+        "connected_to_port": port,
+        "total_submissions": total_submissions,
+        "my_submissions": my_submissions,
+        "total_corrections": total_corrections,
+        "total_scores": total_scores,
+    })
+
+
+
+SCORE_METRICS = [
+    ("spelling_score", "Spelling Score"),
+    ("grammar_score", "Grammar Score"),
+    ("sentence_score", "Sentence Structure Score"),
+    ("overall_score", "Overall Score"),
+]
+
+
+def _parse_date(value):
+    """Turn 'YYYY-MM-DD' from the filter form into a date, or None if blank/invalid."""
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def fetch_score_trends(user_id, granularity="daily", start=None, end=None):
+    """Average scores per day (or per month) for ONE user, optionally date-filtered."""
+    trunc = "month" if granularity == "monthly" else "day"
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        cur.execute(
+            """
+            SELECT DATE_TRUNC(%s::text, s.created_at)::date AS period,
+                   ROUND(AVG(sc.spelling_score), 2)  AS spelling_score,
+                   ROUND(AVG(sc.grammar_score), 2)   AS grammar_score,
+                   ROUND(AVG(sc.sentence_score), 2)  AS sentence_score,
+                   ROUND(AVG(sc.overall_score), 2)   AS overall_score,
+                   COUNT(*)                          AS submissions
+            FROM scores sc
+            JOIN submissions s ON s.submission_id = sc.submission_id
+            WHERE s.user_id = %s
+              AND (%s::date IS NULL OR s.created_at::date >= %s::date)
+              AND (%s::date IS NULL OR s.created_at::date <= %s::date)
+            GROUP BY period
+            ORDER BY period
+            """,
+            (trunc, user_id, start, start, end, end),
+        )
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+    return rows
+
+    
+
     
