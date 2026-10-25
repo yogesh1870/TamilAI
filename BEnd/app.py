@@ -676,4 +676,155 @@ def api_debug_counts():
         "total_scores": total_scores,
     })
 
+SCORE_METRICS = [
+    ("spelling_score", "Spelling Score"),
+    ("grammar_score", "Grammar Score"),
+    ("sentence_score", "Sentence Structure Score"),
+    ("overall_score", "Overall Score"),
+]
 
+
+def _parse_date(value):
+    """Turn 'YYYY-MM-DD' from the filter form into a date, or None if blank/invalid."""
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def fetch_score_trends(user_id, granularity="daily", start=None, end=None):
+    """Average scores per day (or per month) for ONE user, optionally date-filtered."""
+    trunc = "month" if granularity == "monthly" else "day"
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        cur.execute(
+            """
+            SELECT DATE_TRUNC(%s::text, s.created_at)::date AS period,
+                   ROUND(AVG(sc.spelling_score), 2)  AS spelling_score,
+                   ROUND(AVG(sc.grammar_score), 2)   AS grammar_score,
+                   ROUND(AVG(sc.sentence_score), 2)  AS sentence_score,
+                   ROUND(AVG(sc.overall_score), 2)   AS overall_score,
+                   COUNT(*)                          AS submissions
+            FROM scores sc
+            JOIN submissions s ON s.submission_id = sc.submission_id
+            WHERE s.user_id = %s
+              AND (%s::date IS NULL OR s.created_at::date >= %s::date)
+              AND (%s::date IS NULL OR s.created_at::date <= %s::date)
+            GROUP BY period
+            ORDER BY period
+            """,
+            (trunc, user_id, start, start, end, end),
+        )
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+    return rows
+
+
+def _chart_html(fig):
+    return fig.to_html(full_html=False, include_plotlyjs=False,
+                       config={"displaylogo": False})
+
+
+def build_charts(rows, granularity):
+    """Return three Plotly chart snippets: line (trend), bar (per period), radar (profile)."""
+    if not rows:
+        return []
+
+    monthly = granularity == "monthly"
+    x_fmt = "%Y-%m" if monthly else "%Y-%m-%d"
+    x_vals = [r["period"].strftime(x_fmt) for r in rows]
+    x_title = "Month" if monthly else "Day"
+    period_word = "Monthly" if monthly else "Daily"
+
+    common_layout = dict(
+        template="plotly_white",
+        height=360,
+        margin=dict(l=40, r=20, t=60, b=40),
+        legend=dict(orientation="h", y=-0.2),
+        xaxis_title=x_title,
+        yaxis=dict(title="Score (/100)", range=[0, 105]),
+    )
+
+    # 1. LINE chart: trend of all four scores over time
+    line_fig = go.Figure()
+    for key, label in SCORE_METRICS:
+        line_fig.add_trace(go.Scatter(
+            x=x_vals,
+            y=[float(r[key]) for r in rows],
+            mode="lines+markers",
+            name=label,
+        ))
+    line_fig.update_layout(title=f"{period_word} Score Trend (Line)", **common_layout)
+
+    # 2. BAR chart: the four scores side by side for each period
+    bar_fig = go.Figure()
+    for key, label in SCORE_METRICS:
+        bar_fig.add_trace(go.Bar(
+            x=x_vals,
+            y=[float(r[key]) for r in rows],
+            name=label,
+        ))
+    bar_fig.update_layout(title=f"{period_word} Scores (Bar)", barmode="group", **common_layout)
+
+    # 3. RADAR chart: average profile across the filtered range, weighted by submission count
+    total = sum(r["submissions"] for r in rows)
+    labels = [label for _, label in SCORE_METRICS]
+    values = [
+        sum(float(r[key]) * r["submissions"] for r in rows) / total
+        for key, _ in SCORE_METRICS
+    ]
+    radar_fig = go.Figure(go.Scatterpolar(
+        r=values + values[:1],          # repeat first point to close the shape
+        theta=labels + labels[:1],
+        fill="toself",
+        name="Average",
+    ))
+    radar_fig.update_layout(
+        title="Average Score Profile (Radar)",
+        template="plotly_white",
+        height=360,
+        margin=dict(l=40, r=40, t=60, b=40),
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        showlegend=False,
+    )
+
+    return [_chart_html(line_fig), _chart_html(bar_fig), _chart_html(radar_fig)]
+
+
+@app.route("/chart-analysis")
+def chart_analysis():
+    if not session.get("user_id"):
+        return redirect(url_for("index"))
+
+    granularity = request.args.get("granularity", "daily")
+    if granularity not in ("daily", "monthly"):
+        granularity = "daily"
+
+    start_date = _parse_date(request.args.get("start"))
+    end_date = _parse_date(request.args.get("end"))
+
+    rows = fetch_score_trends(session["user_id"], granularity, start_date, end_date)
+    charts = build_charts(rows, granularity) if rows else []
+    total = sum(r["submissions"] for r in rows)
+
+    return render_template(
+        "chart_analysis.html",
+        charts=charts,
+        granularity=granularity,
+        start=start_date.isoformat() if start_date else "",
+        end=end_date.isoformat() if end_date else "",
+        total=total,
+        username=session.get("username"),
+    )
+
+
+if _name_ == "_main_":
+    init_db()
+    app.run(debug=True)
